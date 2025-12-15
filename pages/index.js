@@ -1,10 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Search, Plus, Check, X, LogOut, Filter, Archive, Mail, Lock } from 'lucide-react';
+import { Calendar, Search, Plus, Check, X, LogOut, Filter, Archive, Mail, Lock, RefreshCw } from 'lucide-react';
 
 export default function Home() {
   const [user, setUser] = useState(null);
   const [myGrants, setMyGrants] = useState([]);
-  const [userFilters, setUserFilters] = useState({ categories: [], minAmount: 0, maxAmount: 5000000 });
+  const [userFilters, setUserFilters] = useState({
+    categories: [],
+    targetGroups: [],
+    minAmount: 0,
+    maxAmount: 5000000,
+    deadlineFilter: 'all'
+  });
   const [showLogin, setShowLogin] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -13,18 +19,28 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showArchive, setShowArchive] = useState(false);
+  const [scrapedGrants, setScrapedGrants] = useState([]);
+  const [isLoadingGrants, setIsLoadingGrants] = useState(true);
 
-  const scrapedGrants = [
-    { id: 'g1', name: "Kulturrådet - Prosjektstøtte 2025", organization: "Kulturrådet", amount: 500000, deadline: "2025-03-15", category: "Kultur", description: "Støtte til kulturprosjekter", applicationUrl: "https://kulturradet.no/sok-stotte" },
-    { id: 'g2', name: "Frifond - Barn og ungdom", organization: "Frifond", amount: 75000, deadline: "2026-02-28", category: "Barn og ungdom", description: "Tilskudd til aktiviteter", applicationUrl: "https://frifond.no" },
-    { id: 'g3', name: "Sparebankstiftelsen DNB", organization: "Sparebankstiftelsen DNB", amount: 800000, deadline: "2025-04-01", category: "Samfunn", description: "Støtte til samfunnsnyttige prosjekter", applicationUrl: "https://sparebankstiftelsen.no" },
-    { id: 'g4', name: "Helsedirektoratet - Forebygging", organization: "Helsedirektoratet", amount: 600000, deadline: "2025-06-01", category: "Helse", description: "Forebyggende helsearbeid", applicationUrl: "https://helsedirektoratet.no" },
-    { id: 'g5', name: "Miljødirektoratet - Grønne tiltak", organization: "Miljødirektoratet", amount: 300000, deadline: "2025-05-15", category: "Miljø", description: "Lokale miljøtiltak", applicationUrl: "https://miljodirektoratet.no" },
-    { id: 'g6', name: "Forskningsrådet - Innovasjon", organization: "Norges forskningsråd", amount: 1500000, deadline: "2025-09-01", category: "Forskning", description: "Innovative prosjekter", applicationUrl: "https://forskningsradet.no" },
-    { id: 'g7', name: "Bufdir - Inkludering", organization: "Bufdir", amount: 400000, deadline: "2025-08-20", category: "Barn og ungdom", description: "Inkluderingstiltak", applicationUrl: "https://bufdir.no" },
-    { id: 'g8', name: "Extra Stiftelsen - Dugnad", organization: "Extra Stiftelsen", amount: 50000, deadline: "2025-12-31", category: "Lokalsamfunn", description: "Dugnadsinnsats", applicationUrl: "https://extra.no/stiftelsen" }
-  ];
+  // Fetch grants from API
+  useEffect(() => {
+    const fetchGrants = async () => {
+      setIsLoadingGrants(true);
+      try {
+        const response = await fetch('/api/scrape-grants');
+        const data = await response.json();
+        setScrapedGrants(data.grants || []);
+      } catch (error) {
+        console.error('Failed to fetch grants:', error);
+      } finally {
+        setIsLoadingGrants(false);
+      }
+    };
 
+    fetchGrants();
+  }, []);
+
+  // Load user data from localStorage
   useEffect(() => {
     const loadUserData = () => {
       if (!user) return;
@@ -40,6 +56,7 @@ export default function Home() {
     loadUserData();
   }, [user]);
 
+  // Save user data to localStorage
   useEffect(() => {
     const saveUserData = () => {
       if (!user) return;
@@ -55,25 +72,29 @@ export default function Home() {
 
   const handleGoogleLogin = () => {
     const clientId = '224650618022-dhg02n8picd3spe0g3rfr67i6ilk26ll.apps.googleusercontent.com';
-    const redirectUri = window.location.origin;
+    const redirectUri = typeof window !== 'undefined' ? window.location.origin : '';
     const scope = 'email profile openid';
     const state = Math.random().toString(36).substring(7);
     
-    sessionStorage.setItem('google_auth_state', state);
-    
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-      `client_id=${clientId}&` +
-      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      `response_type=token&` +
-      `scope=${encodeURIComponent(scope)}&` +
-      `state=${state}&` +
-      `prompt=select_account`;
-    
-    window.location.href = authUrl;
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('google_auth_state', state);
+      
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${clientId}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `response_type=token&` +
+        `scope=${encodeURIComponent(scope)}&` +
+        `state=${state}&` +
+        `prompt=select_account`;
+      
+      window.location.href = authUrl;
+    }
   };
 
   useEffect(() => {
     const handleGoogleCallback = async () => {
+      if (typeof window === 'undefined') return;
+      
       const hash = window.location.hash;
       
       if (hash && hash.includes('access_token')) {
@@ -143,15 +164,38 @@ export default function Home() {
   const filteredAvailableGrants = useMemo(() => {
     return scrapedGrants.filter(grant => {
       if (myGrants.some(mg => mg.id === grant.id)) return false;
-      if (userFilters.categories.length > 0 && !userFilters.categories.includes(grant.category)) return false;
-      if (grant.amount < userFilters.minAmount || grant.amount > userFilters.maxAmount) return false;
+      
+      if (userFilters.categories.length > 0 && !userFilters.categories.includes(grant.category)) {
+        return false;
+      }
+      
+      if (userFilters.targetGroups?.length > 0 && !userFilters.targetGroups.includes(grant.targetGroup)) {
+        return false;
+      }
+      
+      if (grant.amount < userFilters.minAmount || grant.amount > userFilters.maxAmount) {
+        return false;
+      }
+      
+      if (userFilters.deadlineFilter && userFilters.deadlineFilter !== 'all') {
+        const daysUntil = getDaysUntilDeadline(grant.deadline);
+        if (userFilters.deadlineFilter === '30days' && daysUntil > 30) return false;
+        if (userFilters.deadlineFilter === '90days' && daysUntil > 90) return false;
+      }
+      
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
-        return grant.name.toLowerCase().includes(query) || grant.organization.toLowerCase().includes(query);
+        return (
+          grant.name.toLowerCase().includes(query) ||
+          grant.organization.toLowerCase().includes(query) ||
+          grant.description?.toLowerCase().includes(query) ||
+          grant.category.toLowerCase().includes(query)
+        );
       }
+      
       return true;
     });
-  }, [myGrants, userFilters, searchQuery]);
+  }, [myGrants, userFilters, searchQuery, scrapedGrants]);
 
   const addToMyCalendar = (grant) => {
     setMyGrants([...myGrants, { ...grant, addedDate: new Date().toISOString(), status: 'planned', notes: '' }]);
@@ -180,6 +224,19 @@ export default function Home() {
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('nb-NO', { style: 'currency', currency: 'NOK', maximumFractionDigits: 0 }).format(amount);
+  };
+
+  const refreshGrants = async () => {
+    setIsLoadingGrants(true);
+    try {
+      const response = await fetch('/api/scrape-grants');
+      const data = await response.json();
+      setScrapedGrants(data.grants || []);
+    } catch (error) {
+      console.error('Failed to refresh grants:', error);
+    } finally {
+      setIsLoadingGrants(false);
+    }
   };
 
   if (showLogin) {
@@ -213,7 +270,7 @@ export default function Home() {
               </div>
             </div>
             
-            <button onClick={(e) => { e.preventDefault(); handleEmailLogin(e); }} disabled={isLoggingIn} className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg font-semibold transition-colors">
+            <button onClick={handleEmailLogin} disabled={isLoggingIn} className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg font-semibold transition-colors">
               {isLoggingIn ? 'Logger inn...' : 'Logg inn'}
             </button>
           </div>
@@ -239,8 +296,193 @@ export default function Home() {
     );
   }
 
-  // ... REST OF THE COMPONENT CODE (Settings, Main Calendar View)
-  // Due to character limit, I'll provide this in the next file
+  if (showSettings) {
+    const categories = [...new Set(scrapedGrants.map(g => g.category))];
+    const targetGroups = [...new Set(scrapedGrants.map(g => g.targetGroup))].filter(Boolean);
+    
+    return (
+      <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Filtrer søknader</h2>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600 p-2">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">Kategorier</label>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setUserFilters(prev => ({
+                        ...prev,
+                        categories: prev.categories.includes(cat)
+                          ? prev.categories.filter(c => c !== cat)
+                          : [...prev.categories, cat]
+                      }))}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        userFilters.categories.includes(cat)
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {targetGroups.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">Målgruppe</label>
+                  <div className="flex flex-wrap gap-2">
+                    {targetGroups.map(group => (
+                      <button
+                        key={group}
+                        onClick={() => setUserFilters(prev => ({
+                          ...prev,
+                          targetGroups: prev.targetGroups?.includes(group)
+                            ? prev.targetGroups.filter(g => g !== group)
+                            : [...(prev.targetGroups || []), group]
+                        }))}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          userFilters.targetGroups?.includes(group)
+                            ? 'bg-green-600 text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {group}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Beløpsområde: {formatCurrency(userFilters.minAmount)} - {formatCurrency(userFilters.maxAmount)}
+                </label>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Minimum</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2000000"
+                      step="50000"
+                      value={userFilters.minAmount}
+                      onChange={(e) => setUserFilters({
+                        ...userFilters,
+                        minAmount: parseInt(e.target.value)
+                      })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                      <span>0 kr</span>
+                      <span>2 mill kr</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Maksimum</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="5000000"
+                      step="100000"
+                      value={userFilters.maxAmount}
+                      onChange={(e) => setUserFilters({
+                        ...userFilters,
+                        maxAmount: parseInt(e.target.value)
+                      })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                      <span>0 kr</span>
+                      <span>5 mill kr</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">Tidsfrist</label>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setUserFilters({ ...userFilters, deadlineFilter: 'all' })}
+                    className={`w-full py-2 px-4 rounded-lg text-sm font-medium ${
+                      userFilters.deadlineFilter === 'all'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    Alle frister
+                  </button>
+                  <button
+                    onClick={() => setUserFilters({ ...userFilters, deadlineFilter: '30days' })}
+                    className={`w-full py-2 px-4 rounded-lg text-sm font-medium ${
+                      userFilters.deadlineFilter === '30days'
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    Innen 30 dager
+                  </button>
+                  <button
+                    onClick={() => setUserFilters({ ...userFilters, deadlineFilter: '90days' })}
+                    className={`w-full py-2 px-4 rounded-lg text-sm font-medium ${
+                      userFilters.deadlineFilter === '90days'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    Innen 90 dager
+                  </button>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setUserFilters({
+                  categories: [],
+                  targetGroups: [],
+                  minAmount: 0,
+                  maxAmount: 5000000,
+                  deadlineFilter: 'all'
+                })}
+                className="w-full py-2 px-4 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300"
+              >
+                Nullstill alle filtre
+              </button>
+
+              <div className="pt-6 border-t">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Kontoinformasjon</h3>
+                <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Navn:</span>
+                    <span className="font-medium text-gray-900">{user.name}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">E-post:</span>
+                    <span className="font-medium text-gray-900">{user.email}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => setShowSettings(false)}
+                className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+              >
+                Lagre innstillinger
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const sortedMyGrants = [...myGrants].sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
   const upcomingGrants = sortedMyGrants.filter(g => getDaysUntilDeadline(g.deadline) >= 0);
@@ -362,37 +604,57 @@ export default function Home() {
                 <input type="text" placeholder="Søk..." className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
               </div>
 
+              <button
+                onClick={refreshGrants}
+                disabled={isLoadingGrants}
+                className="w-full py-2 px-4 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200 flex items-center justify-center gap-2 mb-4 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingGrants ? 'animate-spin' : ''}`} />
+                {isLoadingGrants ? 'Oppdaterer...' : 'Oppdater søknader'}
+              </button>
+
               <button onClick={() => setShowSettings(true)} className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 flex items-center justify-center gap-2 mb-4">
                 <Filter className="w-4 h-4" />Juster filtre
               </button>
 
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {filteredAvailableGrants.map(grant => {
-                  const daysUntil = getDaysUntilDeadline(grant.deadline);
-                  return (
-                    <div key={grant.id} className="border-2 border-gray-200 rounded-lg p-3 hover:border-blue-300">
-                      <div className="flex justify-between mb-2">
-                        <h3 className="font-semibold text-gray-900 text-sm flex-1 pr-2">{grant.name}</h3>
-                        <span className="text-xs font-medium text-gray-600">{daysUntil}d</span>
+              {isLoadingGrants ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-3"></div>
+                  <p className="text-sm text-gray-600">Laster søknader...</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {filteredAvailableGrants.map(grant => {
+                    const daysUntil = getDaysUntilDeadline(grant.deadline);
+                    return (
+                      <div key={grant.id} className="border-2 border-gray-200 rounded-lg p-3 hover:border-blue-300">
+                        <div className="flex justify-between mb-2">
+                          <h3 className="font-semibold text-gray-900 text-sm flex-1 pr-2">{grant.name}</h3>
+                          <span className="text-xs font-medium text-gray-600">{daysUntil}d</span>
+                        </div>
+                        <p className="text-xs text-gray-600 mb-2">{grant.organization}</p>
+                        <div className="flex justify-between mb-3">
+                          <span className="text-sm font-semibold text-gray-900">{formatCurrency(grant.amount)}</span>
+                          <span className="text-xs text-gray-500">{new Date(grant.deadline).toLocaleDateString('nb-NO')}</span>
+                        </div>
+                        <button onClick={() => addToMyCalendar(grant)} className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center justify-center gap-2">
+                          <Plus className="w-4 h-4" />Legg til
+                        </button>
                       </div>
-                      <p className="text-xs text-gray-600 mb-2">{grant.organization}</p>
-                      <div className="flex justify-between mb-3">
-                        <span className="text-sm font-semibold text-gray-900">{formatCurrency(grant.amount)}</span>
-                        <span className="text-xs text-gray-500">{new Date(grant.deadline).toLocaleDateString('nb-NO')}</span>
-                      </div>
-                      <button onClick={() => addToMyCalendar(grant)} className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center justify-center gap-2">
-                        <Plus className="w-4 h-4" />Legg til
-                      </button>
+                    );
+                  })}
+                  
+                  {filteredAvailableGrants.length === 0 && (
+                    <div className="text-center py-6">
+                      <p className="text-sm text-gray-600 mb-2">Ingen søknader funnet</p>
+                      <button onClick={() => setShowSettings(true)} className="text-sm text-blue-600 hover:underline">Juster filtre</button>
                     </div>
-                  );
-                })}
-                
-                {filteredAvailableGrants.length === 0 && (
-                  <div className="text-center py-6">
-                    <p className="text-sm text-gray-600 mb-2">Ingen søknader funnet</p>
-                    <button onClick={() => setShowSettings(true)} className="text-sm text-blue-600 hover:underline">Juster filtre</button>
-                  </div>
-                )}
+                  )}
+                </div>
+              )}
+
+              <div className="mt-4 pt-4 border-t text-center text-xs text-gray-500">
+                {scrapedGrants.length} søknader tilgjengelig
               </div>
             </div>
           </div>
